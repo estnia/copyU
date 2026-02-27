@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=copyU
+Name[zh_CN]=copyU剪贴板
+Comment=UOS V20 剪贴板管理工具
+Comment[zh_CN]=UOS V20 剪贴板管理工具
+Exec=python3 /opt/copyu/main.py
+Icon=/opt/copyu/icon.svg
+Type=Application
+Terminal=false
+Categories=Utility;Office;
+StartupNotify=true
+StartupWMClass=copyU
+Keywords=clipboard;copy;paste;剪贴板;

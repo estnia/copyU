@@ -1,0 +1,25 @@
+#!/bin/bash
+set -e
+
+echo "正在配置 copyU..."
+
+# 检查 pynput 是否安装
+if ! python3 -c "import pynput" 2>/dev/null; then
+    echo ""
+    echo "============================================"
+    echo "警告：缺少 Python 依赖 'pynput'"
+    echo ""
+    echo "请运行以下命令安装："
+    echo "  sudo pip3 install pynput"
+    echo ""
+    echo "或者："
+    echo "  sudo apt-get install python3-pip"
+    echo "  sudo pip3 install pynput"
+    echo "============================================"
+    echo ""
+fi
+
+# 更新桌面数据库
+update-desktop-database /usr/share/applications/ 2>/dev/null || true
+
+echo "copyU 配置完成"
