@@ -484,21 +484,48 @@ class PasteWindow(QWidget):
         self.records = records
         self.list_widget.clear()
 
+        font_size = self.config.getint('UI', 'font_size', 12)
+        time_font_size = max(8, font_size - 2)  # 时间字号小2号，最小为8
+
         for record in records:
             # 截取显示文本（前50个字符）
             text = record['plain_text'].replace('\n', ' ').strip()
             if len(text) > 50:
                 text = text[:50] + '...'
 
-            # 格式化显示
+            # 使用富文本格式显示，时间字号小2号
             display_text = f"[{record['display_time']}] {text}"
             item = QListWidgetItem(display_text)
             item.setData(Qt.UserRole, record['id'])
             item.setToolTip(record['plain_text'][:200])  # 悬停提示
+
+            # 设置富文本格式，时间部分使用更小的字号
+            time_str = record['display_time']
+            html_text = f'<span style="font-size:{time_font_size}px; color:#888888;">[{time_str}]</span> <span style="font-size:{font_size}px;">{text}</span>'
+            item.setText("")  # 清空默认文本，使用富文本
+            item.setData(Qt.UserRole + 1, html_text)  # 存储富文本
+
             self.list_widget.addItem(item)
 
+        # 设置项目的富文本显示
+        self._update_item_display()
+
+    def _update_item_display(self):
+        """更新列表项的显示（使用富文本）"""
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            html_text = item.data(Qt.UserRole + 1)
+            if html_text:
+                # 创建一个 QLabel 来显示富文本
+                label = QLabel(html_text)
+                label.setWordWrap(False)
+                label.setStyleSheet("background: transparent; padding: 4px;")
+                # 设置鼠标透明，让点击事件传递到列表项
+                label.setAttribute(Qt.WA_TransparentForMouseEvents)
+                self.list_widget.setItemWidget(item, label)
+
         # 更新统计水印
-        count = len(records)
+        count = len(self.records)
         self.hint_label.setText(f'共 {count} 条')
 
         # 默认选中第一项
@@ -797,6 +824,7 @@ class TrayIcon(QSystemTrayIcon):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.parent_app = parent
         self.setup_menu()
         self.setup_icon()
 
@@ -807,6 +835,15 @@ class TrayIcon(QSystemTrayIcon):
         # 显示/隐藏窗口
         self.show_action = QAction('显示剪贴板历史', self)
         self.menu.addAction(self.show_action)
+
+        self.menu.addSeparator()
+
+        # 开机启动选项
+        self.autostart_action = QAction('开机启动', self)
+        self.autostart_action.setCheckable(True)
+        self.autostart_action.setChecked(self.is_autostart_enabled())
+        self.autostart_action.triggered.connect(self.toggle_autostart)
+        self.menu.addAction(self.autostart_action)
 
         self.menu.addSeparator()
 
@@ -822,6 +859,57 @@ class TrayIcon(QSystemTrayIcon):
         self.menu.addAction(self.quit_action)
 
         self.setContextMenu(self.menu)
+
+    def is_autostart_enabled(self) -> bool:
+        """检查是否已设置开机启动"""
+        autostart_dir = os.path.expanduser('~/.config/autostart')
+        desktop_file = os.path.join(autostart_dir, 'copyu.desktop')
+        return os.path.exists(desktop_file)
+
+    def toggle_autostart(self, enabled: bool):
+        """切换开机启动状态"""
+        autostart_dir = os.path.expanduser('~/.config/autostart')
+        desktop_file = os.path.join(autostart_dir, 'copyu.desktop')
+
+        if enabled:
+            # 创建 autostart 目录
+            os.makedirs(autostart_dir, exist_ok=True)
+
+            # 获取当前脚本路径
+            script_path = os.path.abspath(sys.argv[0])
+            script_dir = os.path.dirname(script_path)
+            icon_path = os.path.join(script_dir, 'icon.svg')
+
+            # 创建 .desktop 文件内容
+            desktop_content = f"""[Desktop Entry]
+Name=copyU
+Comment=剪贴板管理器
+Exec=python3 {script_path}
+Icon={icon_path}
+Type=Application
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+"""
+
+            try:
+                with open(desktop_file, 'w', encoding='utf-8') as f:
+                    f.write(desktop_content)
+                os.chmod(desktop_file, 0o755)
+                print(f"已启用开机启动: {desktop_file}")
+            except Exception as e:
+                print(f"启用开机启动失败: {e}")
+                self.autostart_action.setChecked(False)
+        else:
+            # 删除 .desktop 文件
+            try:
+                if os.path.exists(desktop_file):
+                    os.remove(desktop_file)
+                    print("已禁用开机启动")
+            except Exception as e:
+                print(f"禁用开机启动失败: {e}")
+                self.autostart_action.setChecked(True)
 
     def setup_icon(self):
         """设置图标 - 使用设计的SVG图标"""
@@ -896,7 +984,7 @@ class CopyUApp(QApplication):
         self.clipboard().dataChanged.connect(self.on_clipboard_changed)
 
         # 初始化系统托盘
-        self.tray_icon = TrayIcon()
+        self.tray_icon = TrayIcon(self)
         self.tray_icon.show_action.triggered.connect(self.show_paste_window)
         self.tray_icon.cleanup_action.triggered.connect(self.trigger_cleanup)
         self.tray_icon.show()
