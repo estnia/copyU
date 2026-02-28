@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QTabBar, QPushButton, QInputDialog, QMessageBox
 )
 from PyQt5.QtCore import (
-    Qt, QThread, pyqtSignal, QTimer, QMimeData, QPoint, QSize, QObject
+    Qt, QThread, pyqtSignal, QTimer, QMimeData, QPoint, QSize, QObject, QRect
 )
 from PyQt5.QtGui import (
     QClipboard, QIcon, QColor, QPalette, QFont, QKeyEvent, QCursor
@@ -686,10 +686,21 @@ class PasteWindow(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        # 窗口大小和位置
+        # 窗口大小和位置 - 支持自由调整大小
         width = self.config.getint('UI', 'window_width', 400)
         height = self.config.getint('UI', 'window_height', 300)
-        self.setFixedSize(width, height)
+
+        # 设置最小和最大尺寸限制
+        self.setMinimumSize(300, 200)   # 最小 300x200
+        self.setMaximumSize(800, 600)   # 最大 800x600
+        self.resize(width, height)
+
+        # 启用鼠标跟踪用于拖动调整大小
+        self.setMouseTracking(True)
+        self._resize_edge = None
+        self._resize_start_pos = None
+        self._resize_start_geometry = None
+        self._resize_margin = 8  # 边缘检测宽度
 
         # 主布局
         layout = QVBoxLayout(self)
@@ -1153,19 +1164,95 @@ class PasteWindow(QWidget):
                     self.closed.emit()
                 return False
         return super().eventFilter(obj, event)
-        bottom_layout.setSpacing(5)
 
-        # 快捷键提示标签
-        self.title_label = QLabel('单击/↑↓选择 | Ctrl+1纯文本 | Ctrl+Enter/双击原格式 | Esc关闭')
-        self.title_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-        self.title_label.setFont(QFont('Noto Sans CJK SC', font_size - 2))
-        bottom_layout.addWidget(self.title_label)
+    def mousePressEvent(self, event):
+        """鼠标按下事件 - 检测是否在调整大小区域"""
+        if event.button() == Qt.LeftButton:
+            self._resize_edge = self._get_resize_edge(event.pos())
+            if self._resize_edge:
+                self._resize_start_pos = event.globalPos()
+                self._resize_start_geometry = self.geometry()
+                event.accept()
+            else:
+                # 允许拖动窗口
+                self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+                event.accept()
 
-        layout.addWidget(bottom_bar)
+    def mouseMoveEvent(self, event):
+        """鼠标移动事件 - 调整光标形状或调整大小"""
+        if event.buttons() == Qt.NoButton:
+            # 仅移动鼠标，更新光标形状
+            edge = self._get_resize_edge(event.pos())
+            self._set_cursor_for_edge(edge)
+        elif event.buttons() == Qt.LeftButton and self._resize_edge:
+            # 正在调整大小
+            self._perform_resize(event.globalPos())
+            event.accept()
+        elif event.buttons() == Qt.LeftButton and hasattr(self, '_drag_pos'):
+            # 拖动窗口
+            self.move(event.globalPos() - self._drag_pos)
+            event.accept()
 
-        # 设置透明度
-        opacity = self.config.getfloat('UI', 'window_opacity', 0.95)
-        self.setWindowOpacity(opacity)
+    def mouseReleaseEvent(self, event):
+        """鼠标释放事件 - 结束调整大小"""
+        if event.button() == Qt.LeftButton:
+            self._resize_edge = None
+            self._resize_start_pos = None
+            self._resize_start_geometry = None
+            if hasattr(self, '_drag_pos'):
+                delattr(self, '_drag_pos')
+            self.unsetCursor()
+            event.accept()
+
+    def _get_resize_edge(self, pos):
+        """检测鼠标位置是否在调整大小边缘"""
+        rect = self.rect()
+        margin = self._resize_margin
+
+        # 检测右下角
+        if pos.x() >= rect.width() - margin and pos.y() >= rect.height() - margin:
+            return 'bottom_right'
+        # 检测右侧
+        elif pos.x() >= rect.width() - margin:
+            return 'right'
+        # 检测下侧
+        elif pos.y() >= rect.height() - margin:
+            return 'bottom'
+        return None
+
+    def _set_cursor_for_edge(self, edge):
+        """根据边缘设置光标形状"""
+        if edge == 'bottom_right':
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif edge in ('right', 'bottom'):
+            self.setCursor(Qt.SizeFDiagCursor if edge == 'bottom_right' else Qt.SizeHorCursor if edge == 'right' else Qt.SizeVerCursor)
+        else:
+            self.unsetCursor()
+
+    def _perform_resize(self, global_pos):
+        """执行调整大小"""
+        if not self._resize_start_geometry or not self._resize_start_pos:
+            return
+
+        delta = global_pos - self._resize_start_pos
+        new_geometry = QRect(self._resize_start_geometry)
+
+        if self._resize_edge in ('right', 'bottom_right'):
+            new_geometry.setWidth(self._resize_start_geometry.width() + delta.x())
+        if self._resize_edge in ('bottom', 'bottom_right'):
+            new_geometry.setHeight(self._resize_start_geometry.height() + delta.y())
+
+        # 确保在最小和最大尺寸范围内
+        min_w, min_h = self.minimumSize().width(), self.minimumSize().height()
+        max_w, max_h = self.maximumSize().width(), self.maximumSize().height()
+
+        new_width = max(min_w, min(new_geometry.width(), max_w))
+        new_height = max(min_h, min(new_geometry.height(), max_h))
+
+        new_geometry.setWidth(new_width)
+        new_geometry.setHeight(new_height)
+
+        self.setGeometry(new_geometry)
 
 
 # ==================== 全局热键管理器 ====================
