@@ -334,22 +334,20 @@ class DatabaseWorker(QThread):
         self.records_loaded.emit(result)
 
     def _cleanup_records(self):
-        """清理过期记录"""
+        """清理过期记录 - 保留被固定到自定义标签页的记录"""
         cutoff_time = time.time() - (self.max_age_days * 24 * 3600)
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # 先清理关联的固定记录
+        # 只删除未被固定到任何自定义标签页的过期记录
+        # 被固定的记录将永久保留
         cursor.execute('''
-            DELETE FROM pinned_records WHERE record_id IN (
-                SELECT id FROM clipboard_records WHERE timestamp < ?
+            DELETE FROM clipboard_records
+            WHERE timestamp < ?
+            AND id NOT IN (
+                SELECT DISTINCT record_id FROM pinned_records
             )
-        ''', (cutoff_time,))
-
-        # 再清理过期记录
-        cursor.execute('''
-            DELETE FROM clipboard_records WHERE timestamp < ?
         ''', (cutoff_time,))
 
         deleted_count = cursor.rowcount
