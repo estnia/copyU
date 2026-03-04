@@ -15,7 +15,21 @@
 - **内存控制**: 超过1MB的记录自动跳过
 - **UOS深度风格**: 圆角、浅色调、无边框窗口
 
-## 安装依赖
+## 安装
+
+### 方式一：Deb 包安装（推荐，离线可用）
+
+```bash
+# 下载 deb 包后安装
+sudo dpkg -i copyu_1.3.0_amd64.deb
+
+# 如有依赖问题，运行
+sudo apt-get install -f
+```
+
+**说明**：v1.3.0 起 pynput 依赖已内嵌打包，无需额外安装，完全离线可用。
+
+### 方式二：源码运行
 
 ```bash
 # 安装系统依赖
@@ -24,6 +38,9 @@ sudo apt install -y python3-pyqt5 python3-pip xdotool
 
 # 安装 Python 依赖
 pip3 install -r requirements.txt
+
+# 运行
+python3 main.py
 ```
 
 ## 运行方式

@@ -1,0 +1,262 @@
+统一技术评审报告 — 性能优化设计 & 稳定性/风险设计
+
+对象：main.py（你团队提供的最新开发源码）
+角色：程序优化设计 + 软件稳定性风险评审（可直接用于开发 / PR / QA 对照）
+语言：中文（关键术语保留英文）
+更新时间：基于你此前提交与我对 main.py 的静态检查结果综合生成
+
+⸻
+
+一、总体结论（1句话）
+
+你们已完成多数低风险改造（subprocess→QProcess、剪贴板去重/限长、节流、缩小宽泛异常捕获、socket 超时等），整体结构健康；下一步应重点消除主线程阻塞（异步 QProcess）、强化 DB 事务/资源保护、引入统一的线程池/任务队列与监控度量，以把“稳定性 + 响应性”推上一个量级。
+
+⸻
+
+二、已完成的关键改造（核对项）
+
+（依据你之前上传并我检查到的实现）
+	•	subprocess.run 已移除并用 QProcess 替代（使用绝对路径 /usr/bin/xdotool）。✅
+	•	增加了 shutil.which("xdotool") 的可执行检查以决定 fallback（pyautogui）。✅
+	•	剪贴板写入实现了 _last_clipboard 去重与 MAX_CLIPBOARD_SIZE = 2_000_000 限制（2MB）。✅
+	•	宽泛 except Exception: 被替换为更精确的异常处理或逻辑判断。✅
+	•	单实例检测使用 QLocalSocket.connectToServer() 并显式 waitForConnected(500)。✅
+	•	节流逻辑（time.monotonic()）用于高频触发点（大约 50ms）。✅
+	•	logging 使用占位符格式（logger.debug("...%s", val)）避免不必要字符串拼接。✅
+
+⸻
+
+三、剩余高风险 / 影响性能的点（必须优先处理）
+
+P1（高优先）
+	1.	主线程阻塞 — QProcess.waitForFinished() 或同步等待
+	•	现象/风险：若仍在主线程使用 waitForFinished()（或其它同步等待），会导致 UI 卡顿，影响响应性与用户体验；并在高并发场景下放大。
+	•	建议：改为 异步启动 QProcess + 使用 finished 信号或 QTimer 做超时保护，或把等待移入后台 worker（不在 GUI 线程）。
+	•	可用改动（patch）示例见下方 代码片段 A（异步 QProcess + QTimer）。
+	2.	数据库事务与连接管理不够防护
+	•	现象/风险：多处使用 sqlite3.connect() + 显式 commit()/close()，在异常路径可能产生未关闭连接或未回滚事务，导致 DB 锁、数据不一致、资源泄露。
+	•	建议：统一封装 DB helper，使用 with sqlite3.connect(...) as conn:，启用 PRAGMA journal_mode=WAL;，设置合理 timeout，并对写入路径做重试（backoff）与最大并发限制。
+	•	可用改动示例：代码片段 B（context manager + WAL + timeout）。
+	3.	任务队列无上限 / 线程创建策略未统一
+	•	现象/风险：存在 task_queue、queue_lock 等结构但未使用限长队列，未来热点路径会导致内存无限增长或大量线程创建。
+	•	建议：用 queue.Queue(maxsize=...) 或 collections.deque(maxlen=...)；把 worker 模型改为 QThreadPool + QRunnable，并对入队失败（满队）采取 backpressure 或丢弃策略。
+	•	可用改动示例：代码片段 C（QRunnable worker + queue 限长）。
+
+⸻
+
+四、中优先与可选优化（在保证稳定性下提升性能/可维护性）
+
+P2（中优先）
+	1.	把所有长耗时 / CPU 密集任务放入 QThreadPool（避免主线程与 GUI 阻塞）。
+	2.	统一网络层（若引入 HTTP）使用单例 QNetworkAccessManager，设置超时、read buffer 限制与 TLS 校验。
+	3.	入参与外部路径白名单校验（避免相对路径攻击或文件覆盖关键文件）。
+	4.	任务队列监控与限速策略（rate limiter）：对外部高频触发源（剪贴板、快捷键）进行滑动窗口限速。
+	5.	日志与监控扩展：关键路径计数器（requests/sec, failures/sec）、latency histogram；将 ERROR/EXCEPTION 打到独立 error log 并做轮转（RotatingFileHandler）。
+
+P3（低优先）
+	1.	延迟导入 heavy libs（PIL、numpy 等）—— 加快启动。
+	2.	内存清理与缓存限额（LruCache 或 deque(maxlen)）。
+	3.	开发 CI：加入 semgrep/bandit、flake8、pytest 覆盖率/回归测试。
+
+⸻
+
+五、具体修复/优化代码片段（可直接贴到代码并做 PR）
+
+代码片段 A — 异步 QProcess + QTimer 超时保护（替换同步 wait）
+
+# 异步 QProcess 启动 xdotool，非阻塞主线程
+from PyQt5.QtCore import QProcess, QTimer
+
+class XDoToolRunner:
+    def __init__(self, parent=None, timeout_ms=1000):
+        self._proc = QProcess(parent)
+        self._proc.setProgram("/usr/bin/xdotool")
+        self._timeout_ms = timeout_ms
+
+    def run_async(self, args:list, on_finished=None):
+        # args: ["keyup", "ctrl", ...]
+        if self._proc.state() != QProcess.NotRunning:
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+        self._proc.setArguments(args)
+
+        finished_flag = {'done': False}
+        def _on_finished(exitCode, exitStatus):
+            finished_flag['done'] = True
+            if on_finished:
+                on_finished(exitCode, exitStatus)
+            # 可读取 stderr/stdout 如需日志：
+            # err = bytes(self._proc.readAllStandardError()).decode(errors='ignore')
+
+        self._proc.finished.connect(_on_finished)
+        self._proc.start()
+
+        # 超时保护（非阻塞）
+        timer = QTimer()
+        timer.setSingleShot(True)
+        def _on_timeout():
+            if not finished_flag['done']:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+                # 记录超时日志
+                logger.warning("xdotool async timeout, args=%s", args)
+        timer.timeout.connect(_on_timeout)
+        timer.start(self._timeout_ms)
+        return True  # 立即返回
+
+说明：若上层需要等待结果，请把调用方改为监听回调/信号或在 worker 线程中同步等待；不要在 GUI 线程阻塞等待。
+
+⸻
+
+代码片段 B — SQLite 安全访问封装
+
+import sqlite3
+from contextlib import contextmanager
+
+@contextmanager
+def sqlite_conn(db_path, timeout=5):
+    conn = sqlite3.connect(db_path, timeout=timeout, isolation_level=None)  # autocommit off with explicit transactions
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        yield conn
+        # commit/rollback handled by caller via explicit transaction scope, or use conn.commit() here if desired
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+# 使用示例
+with sqlite_conn(self.db_path) as conn:
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN")
+        cur.execute("INSERT ...", params)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.exception("db write failed")
+        raise
+
+
+⸻
+
+代码片段 C — QThreadPool Worker & 限长 Queue
+
+from PyQt5.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
+from queue import Queue, Full
+
+class WorkerSignals(QObject):
+    finished = pyqtSignal(object, object)  # (result, exception)
+
+class Worker(QRunnable):
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            res = self.fn(*self.args, **self.kwargs)
+            self.signals.finished.emit(res, None)
+        except Exception as e:
+            self.signals.finished.emit(None, e)
+
+# 全局队列（生产者入队）
+task_queue = Queue(maxsize=500)
+
+def submit_task(fn, *args, **kwargs):
+    try:
+        task_queue.put_nowait((fn, args, kwargs))
+    except Full:
+        logger.warning("task queue full, drop task")
+        return False
+    return True
+
+# 消费者：把队列任务派发到 QThreadPool
+def dispatcher_loop():
+    pool = QThreadPool.globalInstance()
+    while True:
+        fn, args, kwargs = task_queue.get()
+        pool.start(Worker(fn, *args, **kwargs))
+        task_queue.task_done()
+
+
+⸻
+
+六、测试 / 验证 & 验收标准（建议纳入 PR / QA 流程）
+
+单元 / 集成测试要点
+	•	剪贴板：写入相同文本不应调用 clipboard.setText()（监测调用次数）；边界测试：2MB、2MB+1 字符。
+	•	QProcess：模拟 xdotool 返回正常/stderr/超时，确保主线程无阻塞 & 超时回收。
+	•	DB：并发写入（N=10 并发）下无锁超时异常或死锁；异常时 rollback。
+	•	任务队列：入队满时不崩溃（记录丢弃），并发处理正确。
+	•	单实例：多进程启动时第二个进程快速返回（<=500ms）并报告已存在实例。
+
+性能/回归指标
+	•	UI 响应（关键交互）99th percentile latency <= 100ms（在普通开发机）。
+	•	启动时间减少（延迟导入后）——目标：减小 cold-start 20%-50%。
+	•	CPU 平均占用在高频触发（100次/秒模拟）下降 30%-50%（主要因为减少 fork 与主线程阻塞）。
+
+⸻
+
+七、可交付产物（建议立即产出）
+	1.	PR-A：把同步 QProcess wait 改为异步（包含测试模拟 xdotool 超时/成功）。 —— 优先合并
+	2.	PR-B：DB helper + migrate 所有 DB 写点到 context manager（含回退脚本与单元测试）。 —— 次优
+	3.	PR-C：引入 QThreadPool / Queue(maxsize=...)，并替换显著耗时任务。 —— 中期
+	4.	CI：加入 pytest + semgrep/bandit 规则 + perf smoke test（关键路径） 。 —— 长期
+
+⸻
+
+八、风险矩阵（概览）
+
+风险项	严重性	可能性	影响	缓解措施
+主线程阻塞（同步等待）	高	中	UI 冻结/用户体验差	异步 QProcess / worker
+DB 事务丢失/锁定	高	中	数据损坏/死锁	context manager + WAL + timeout
+内存/队列爆发	中	中	OOM/性能骤降	限长队列 + backpressure
+PATH 注入（可执行）	中	低	可执行恶意二进制	绝对路径 + shutil.which
+宽泛异常吞掉堆栈	中	低	隐藏真实缺陷	精确捕获 + logger.exception
+日志频繁格式化开销	低	高	CPU 消耗	使用占位符 logging
+
+
+⸻
+
+九、实施计划与回滚策略（短期 2 周计划示例）
+	•	Day 0-2：PR-A（异步 QProcess）开发 + 单元测试 + 本地 perf smoke（重点验证 UI 无卡顿）。
+	•	Day 3：合并 PR-A 到 staging，在内部 Canary（1 台 dev 机）上跑 48 小时。
+	•	Day 4-7：PR-B（DB helper）开发 + 数据回退脚本；在 staging 上跑并发 DB 测试。
+	•	Day 8-10：PR-C（线程池/队列）完成并测试。
+	•	回滚策略：每个 PR 都保持单一职责，回滚即 revert 对应 PR；关键变更（如 DB）上 production 前做 schema+backup 快照并验证回退脚本。
+
+⸻
+
+十、交付给开发的 Checklist（逐项自检）
+	•	所有同步 QProcess waitForFinished() 被替换或移动到非 GUI 线程。
+	•	所有 DB 写入使用 with sqlite_conn(...) 或等价封装，包含 rollback。
+	•	任务队列有明确上限（maxsize / maxlen），并有入队失败处理。
+	•	剪贴板：去重 + 大小限制 + 单元测试覆盖。
+	•	logging：重要异常使用 logger.exception()；避免 f-string 在 debug 中被无谓执行。
+	•	CI：semgrep/bandit/pytest 基线通过。
+	•	性能指标：关键交互 99p latency 已测并满足目标。
+
+⸻
+
+十一、我可以立刻为你输出（任选其一，我会在当前响应中直接生成）
+	•	A. 完整 git-style diff：把 waitForFinished 同步逻辑替换为我上面的异步 QProcess 实现（含 unit test skeleton）。
+	•	B. pytest 单元测试模板：覆盖剪贴板限界、QProcess 超时/成功、DB 事务并发场景。
+	•	C. 简单性能基准脚本：对比 subprocess（若还存在） vs QProcess 异步方案的响应与 CPU 使用（本地运行）。
+
+（不要延迟或等待——选项里选一个我马上生成并贴在这里。若你希望我把“git diff”直接给到 PR 内容，请选择 A。）
+
+⸻
+
+结语
+
+总体平稳，前期 “低风险修复” 已到位；接下来把 阻塞行为异步化 与 DB/队列资源保障 做完，就能把稳定性与性能都提升到可发布级别。选一个我立刻生成你需要的补丁/测试/脚本。

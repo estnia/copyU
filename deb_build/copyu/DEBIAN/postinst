@@ -1,25 +1,17 @@
 #!/bin/bash
 set -e
 
+WHEELS_DIR="/opt/copyu/wheels"
+
 echo "正在配置 copyU..."
 
-# 检查 pynput 是否安装
+# 从本地 wheels 安装 pynput
 if ! python3 -c "import pynput" 2>/dev/null; then
-    echo ""
-    echo "============================================"
-    echo "警告：缺少 Python 依赖 'pynput'"
-    echo ""
-    echo "请运行以下命令安装："
-    echo "  sudo pip3 install pynput"
-    echo ""
-    echo "或者："
-    echo "  sudo apt-get install python3-pip"
-    echo "  sudo pip3 install pynput"
-    echo "============================================"
-    echo ""
+    echo "正在安装 copyU Python 依赖..."
+    pip3 install --no-index --find-links="$WHEELS_DIR" pynput
 fi
 
 # 更新桌面数据库
 update-desktop-database /usr/share/applications/ 2>/dev/null || true
 
-echo "copyU 配置完成"
+echo "copyU 安装完成"

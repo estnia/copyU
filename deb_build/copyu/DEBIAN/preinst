@@ -1,0 +1,23 @@
+#!/bin/bash
+set -e
+
+echo "正在准备安装 copyU..."
+
+# 检查 Python3 是否可用
+if ! command -v python3 &> /dev/null; then
+    echo "错误：未找到 Python3，请先安装 python3"
+    exit 1
+fi
+
+# 检查 pip3 是否可用 (必需，用于安装 wheels)
+if ! command -v pip3 &> /dev/null; then
+    echo "错误：未找到 pip3，请先安装 python3-pip"
+    exit 1
+fi
+
+# 如果是升级操作，备份提示
+if [ "$1" = "upgrade" ] || [ "$1" = "2" ]; then
+    echo "检测到升级操作，现有配置将自动保留..."
+fi
+
+echo "准备完成，开始安装..."
