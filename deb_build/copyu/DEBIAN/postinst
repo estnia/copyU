@@ -5,10 +5,10 @@ WHEELS_DIR="/opt/copyu/wheels"
 
 echo "正在配置 copyU..."
 
-# 从本地 wheels 安装 pynput
+# 从本地 wheels 安装依赖（先装 evdev，再装 pynput）
 if ! python3 -c "import pynput" 2>/dev/null; then
     echo "正在安装 copyU Python 依赖..."
-    pip3 install --no-index --find-links="$WHEELS_DIR" pynput
+    pip3 install --no-index --find-links="$WHEELS_DIR" evdev pynput
 fi
 
 # 更新桌面数据库
