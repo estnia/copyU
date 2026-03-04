@@ -2117,13 +2117,23 @@ class PasteWindow(QWidget):
 
         elif key in (Qt.Key_Return, Qt.Key_Enter):
             if current_item:
+                # 检测是否多选
+                selected_items = list_widget.selectedItems()
+                if len(selected_items) > 1:
+                    self._show_info_dialog('提示', '多选状态下无法粘贴，请单选一项后再粘贴')
+                    return
                 record_id = current_item.data(Qt.UserRole)
                 is_plain = (modifiers == Qt.ShiftModifier)
                 self.paste_requested.emit(record_id, is_plain)
 
         elif key == Qt.Key_1 and modifiers == Qt.ControlModifier:
-            # Ctrl+1: 粘贴纯文本
+            # Ctrl+1: 粘贴纯文本（与 Shift+Enter 逻辑统一）
             if current_item:
+                # 检测是否多选
+                selected_items = list_widget.selectedItems()
+                if len(selected_items) > 1:
+                    self._show_info_dialog('提示', '多选状态下无法粘贴，请单选一项后再粘贴')
+                    return
                 record_id = current_item.data(Qt.UserRole)
                 self.paste_requested.emit(record_id, True)
 
