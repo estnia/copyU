@@ -5,10 +5,22 @@ WHEELS_DIR="/opt/copyu/wheels"
 
 echo "正在配置 copyU..."
 
-# 从本地 wheels 安装依赖（先装 evdev，再装 pynput）
+# 从本地 wheels 安装依赖
 if ! python3 -c "import pynput" 2>/dev/null; then
     echo "正在安装 copyU Python 依赖..."
-    pip3 install --no-index --find-links="$WHEELS_DIR" evdev pynput
+    # 先尝试离线安装 evdev（如果有预编译 wheel）
+    if ! pip3 install --no-index --find-links="$WHEELS_DIR" evdev 2>/dev/null; then
+        echo "尝试在线安装 evdev（需要网络）..."
+        pip3 install evdev || {
+            echo "错误: evdev 安装失败"
+            echo "请确保系统已连接网络，或手动安装:"
+            echo "  sudo apt install python3-dev gcc"
+            echo "  sudo pip3 install evdev"
+            exit 1
+        }
+    fi
+    # 安装其他依赖
+    pip3 install --no-index --find-links="$WHEELS_DIR" pynput
 fi
 
 # 更新桌面数据库
