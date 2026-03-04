@@ -5,25 +5,118 @@ WHEELS_DIR="/opt/copyu/wheels"
 
 echo "正在配置 copyU..."
 
-# 从本地 wheels 安装依赖
-if ! python3 -c "import pynput" 2>/dev/null; then
-    echo "正在安装 copyU Python 依赖..."
-    # 先尝试离线安装 evdev（如果有预编译 wheel）
-    if ! pip3 install --no-index --find-links="$WHEELS_DIR" evdev 2>/dev/null; then
-        echo "尝试在线安装 evdev（需要网络）..."
-        pip3 install evdev || {
-            echo "错误: evdev 安装失败"
-            echo "请确保系统已连接网络，或手动安装:"
-            echo "  sudo apt install python3-dev gcc"
-            echo "  sudo pip3 install evdev"
-            exit 1
-        }
+# 检查 apt 依赖是否已安装
+check_apt_deps() {
+    local deps_missing=""
+
+    if ! dpkg -l | grep -q "^ii  python3 "; then
+        deps_missing="$deps_missing python3"
     fi
-    # 安装其他依赖
-    pip3 install --no-index --find-links="$WHEELS_DIR" pynput
+    if ! dpkg -l | grep -q "^ii  python3-pyqt5"; then
+        deps_missing="$deps_missing python3-pyqt5"
+    fi
+    if ! dpkg -l | grep -q "^ii  python3-pip"; then
+        deps_missing="$deps_missing python3-pip"
+    fi
+    if ! command -v xdotool &> /dev/null; then
+        deps_missing="$deps_missing xdotool"
+    fi
+
+    echo "$deps_missing"
+}
+
+# 尝试自动安装 apt 依赖
+install_apt_deps() {
+    local deps="$1"
+
+    if [ -n "$deps" ]; then
+        echo "检测到缺少系统依赖:$deps"
+
+        # 检查是否有网络连接
+        if ping -c 1 -W 3 archive.ubuntu.com &> /dev/null || \
+           ping -c 1 -W 3 mirrors.aliyun.com &> /dev/null || \
+           ping -c 1 -W 3 uos.packages.deepin.com &> /dev/null; then
+            echo "正在自动安装系统依赖（需要 sudo 权限）..."
+            if sudo apt-get update && sudo apt-get install -y $deps; then
+                echo "系统依赖安装成功"
+                return 0
+            else
+                echo "警告: 自动安装失败，请手动安装:"
+                echo "  sudo apt-get update"
+                echo "  sudo apt-get install -y$deps"
+                return 1
+            fi
+        else
+            echo "警告: 无网络连接，无法自动安装系统依赖"
+            echo "请手动安装: sudo apt-get install -y$deps"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# 主流程：检查并安装 apt 依赖
+DEPS_MISSING=$(check_apt_deps)
+if [ -n "$DEPS_MISSING" ]; then
+    install_apt_deps "$DEPS_MISSING" || true
+fi
+
+# 再次检查关键依赖
+if ! command -v python3 &> /dev/null; then
+    echo "错误: python3 未安装，无法继续"
+    exit 1
+fi
+
+if ! command -v pip3 &> /dev/null; then
+    echo "错误: pip3 未安装，请运行: sudo apt-get install python3-pip"
+    exit 1
+fi
+
+# 检查并安装 Python 依赖（离线模式）
+need_install=false
+if ! python3 -c "import pynput" 2>/dev/null; then
+    need_install=true
+fi
+if ! python3 -c "import pyautogui" 2>/dev/null; then
+    need_install=true
+fi
+
+if [ "$need_install" = true ]; then
+    echo "正在安装 copyU Python 依赖（离线模式）..."
+
+    # 先尝试离线安装 evdev（如果有预编译 wheel）
+    if ! python3 -c "import evdev" 2>/dev/null; then
+        if ! pip3 install --no-index --find-links="$WHEELS_DIR" evdev 2>/dev/null; then
+            echo "警告: evdev 离线安装失败，尝试在线安装..."
+            pip3 install evdev || echo "警告: evdev 安装失败，部分功能可能受限"
+        fi
+    fi
+
+    # 安装 pynput
+    pip3 install --no-index --find-links="$WHEELS_DIR" pynput || {
+        echo "错误: pynput 安装失败"
+        exit 1
+    }
+
+    # 安装 pyautogui 的核心依赖（跳过 pyscreeze/Pillow，因为 copyU 只用键盘功能）
+    pip3 install --no-index --find-links="$WHEELS_DIR" \
+        pymsgbox pytweening mouseinfo pyperclip PyRect PyGetWindow || {
+        echo "警告: pyautogui 部分依赖安装失败"
+    }
+
+    # 最后安装 pyautogui（--no-deps 跳过其依赖检查）
+    pip3 install --no-deps --no-index --find-links="$WHEELS_DIR" pyautogui || {
+        echo "错误: pyautogui 安装失败"
+        exit 1
+    }
 fi
 
 # 更新桌面数据库
 update-desktop-database /usr/share/applications/ 2>/dev/null || true
 
 echo "copyU 安装完成"
+echo ""
+echo "使用说明:"
+echo "  - 启动: copyu 或在应用菜单中找到 CopyU"
+echo "  - 默认热键: Ctrl+` (反引号键) 显示/隐藏窗口"
+echo "  - 托盘图标: 右键可退出或访问设置"
