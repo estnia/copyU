@@ -2165,19 +2165,36 @@ class PasteWindow(QWidget):
             if not current_tab:
                 return
 
-            # Delete 键仅处理当前选中项（单项），无确认
-            record_id = current_item.data(Qt.UserRole)
-
-            if current_tab['is_default']:
-                # 默认标签页：直接删除记录（无确认）
-                self.delete_record_requested.emit(record_id)
+            # 检测是否多选（复选）
+            selected_items = list_widget.selectedItems()
+            if len(selected_items) > 1:
+                # 复选时：弹出确认对话框确认删除/移除
+                record_ids = [item.data(Qt.UserRole) for item in selected_items]
+                if current_tab['is_default']:
+                    # 默认页：确认批量删除
+                    self._confirm_batch_delete(record_ids)
+                else:
+                    # 自定义页：确认批量取消固定
+                    count = len(record_ids)
+                    if self._show_confirm_dialog(
+                        '确认批量取消固定',
+                        f'确定要取消固定选中的 {count} 条记录吗？\n取消后记录将回到默认页。'
+                    ):
+                        for record_id in record_ids:
+                            self.unpin_record_requested.emit(record_id, self.current_tab_id)
             else:
-                # 自定义标签页：取消固定（需要确认）
-                if self._show_confirm_dialog(
-                    '确认取消固定',
-                    '确定要取消固定此记录吗？\n取消后记录将回到默认页。'
-                ):
-                    self.unpin_record_requested.emit(record_id, self.current_tab_id)
+                # 单选时
+                record_id = current_item.data(Qt.UserRole)
+                if current_tab['is_default']:
+                    # 默认标签页单选：直接删除记录（无确认）
+                    self.delete_record_requested.emit(record_id)
+                else:
+                    # 自定义标签页单选：弹出确认对话框取消固定
+                    if self._show_confirm_dialog(
+                        '确认取消固定',
+                        '确定要取消固定此记录吗？\n取消后记录将回到默认页。'
+                    ):
+                        self.unpin_record_requested.emit(record_id, self.current_tab_id)
 
     def _format_tooltip(self, text: str) -> str:
         """格式化 tooltip 文本为 HTML，支持自动换行"""
@@ -2275,15 +2292,40 @@ class PasteWindow(QWidget):
             if key == Qt.Key_Delete:
                 current_item = obj.currentItem()
                 if current_item:
-                    record_id = current_item.data(Qt.UserRole)
                     # 获取该列表控件所属的标签页ID
                     for tab in self.tabs:
                         list_widget = self.get_list_widget_for_tab(tab['id'])
                         if list_widget == obj:
-                            if tab['is_default']:
-                                self.delete_record_requested.emit(record_id)
+                            # 检测是否多选（复选）
+                            selected_items = obj.selectedItems()
+                            if len(selected_items) > 1:
+                                # 复选时：弹出确认对话框确认删除/移除
+                                record_ids = [item.data(Qt.UserRole) for item in selected_items]
+                                if tab['is_default']:
+                                    # 默认页：确认批量删除
+                                    self._confirm_batch_delete(record_ids)
+                                else:
+                                    # 自定义页：确认批量取消固定
+                                    count = len(record_ids)
+                                    if self._show_confirm_dialog(
+                                        '确认批量取消固定',
+                                        f'确定要取消固定选中的 {count} 条记录吗？\n取消后记录将回到默认页。'
+                                    ):
+                                        for record_id in record_ids:
+                                            self.unpin_record_requested.emit(record_id, tab['id'])
                             else:
-                                self.unpin_record_requested.emit(record_id, tab['id'])
+                                # 单选时
+                                record_id = current_item.data(Qt.UserRole)
+                                if tab['is_default']:
+                                    # 默认标签页单选：直接删除记录（无确认）
+                                    self.delete_record_requested.emit(record_id)
+                                else:
+                                    # 自定义标签页单选：弹出确认对话框取消固定
+                                    if self._show_confirm_dialog(
+                                        '确认取消固定',
+                                        '确定要取消固定此记录吗？\n取消后记录将回到默认页。'
+                                    ):
+                                        self.unpin_record_requested.emit(record_id, tab['id'])
                             return True
         if obj == self:
             # 鼠标按下时检查是否点击了菜单外部
@@ -2764,12 +2806,36 @@ class TrayIcon(QSystemTrayIcon):
 
         self.menu.addSeparator()
 
+        # 关于
+        self.about_action = QAction('关于', self)
+        self.about_action.triggered.connect(self.show_about)
+        self.menu.addAction(self.about_action)
+
+        self.menu.addSeparator()
+
         # 退出
         self.quit_action = QAction('退出', self)
         self.quit_action.triggered.connect(QApplication.instance().quit)
         self.menu.addAction(self.quit_action)
 
         self.setContextMenu(self.menu)
+
+    def show_about(self):
+        """显示关于对话框"""
+        QMessageBox.about(
+            None,
+            '关于 CopyU',
+            '<h2>CopyU v1.3.2-beta</h2>'
+            '<p>基于 PyQt5 + SQLite3 开发的轻量级剪贴板管理器</p>'
+            '<p>支持全局热键、历史记录、纯文本/HTML格式粘贴</p>'
+            '<hr>'
+            '<p><b>开源信息：</b></p>'
+            '<p>GitHub: <a href="https://github.com/estnia/copyU">https://github.com/estnia/copyU</a></p>'
+            '<p>License: MIT</p>'
+            '<hr>'
+            '<p><b>作者：</b> estnia</p>'
+            '<p>构建日期：2026-03-04</p>'
+        )
 
     def is_autostart_enabled(self) -> bool:
         """检查是否已设置开机启动"""

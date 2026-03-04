@@ -1,27 +1,6 @@
-# Python
+# 自动生成的文件
+copyu_*.deb
+deb_build/copyu/opt/copyu/main.py
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# Virtual environments
-venv/
-env/
-ENV/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
+*.pyc
 .DS_Store
-Thumbs.db
-
-# Project specific - keep versions directory
-# but ignore runtime files
-*.log
-config.ini
-clipboard.db
