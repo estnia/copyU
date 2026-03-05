@@ -17,7 +17,7 @@ from pathlib import Path
 
 # Configuration
 PACKAGE_NAME = "copyu"
-VERSION = "1.3.0"
+VERSION = "1.3.3-beta"
 ARCHITECTURES = {
     "amd64": "x86_64",
     "arm64": "aarch64",
