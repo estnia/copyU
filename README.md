@@ -21,13 +21,13 @@
 
 ```bash
 # 下载 deb 包后安装
-sudo dpkg -i copyu_1.3.0_amd64.deb
+sudo dpkg -i copyu_1.4.0-beta_offline_amd64.deb
 
 # 如有依赖问题，运行
 sudo apt-get install -f
 ```
 
-**说明**：v1.3.0 起 pynput 依赖已内嵌打包，无需额外安装，完全离线可用。
+**说明**：v1.4.0-beta 起采用模块化架构，所有依赖已内嵌打包，无需额外安装，完全离线可用。
 
 ### 方式二：源码运行
 
@@ -120,6 +120,8 @@ font_size = 12                                      # 字体大小
 
 ## 技术说明
 
+- **架构**: 模块化分层架构 (core → infrastructure → services → ui)
+- **单实例**: QLocalSocket/Server 实现单实例，新实例启动自动激活已有窗口
 - **全局热键**: 使用 `pynput` 或 `system_hotkey`
 - **键盘模拟**: 使用 `xdotool`，QProcess 完全异步非阻塞（无 waitForFinished 阻塞）
 - **数据库 I/O**: SQLite WAL 模式 + Context Manager 统一连接管理，自动事务回滚
@@ -131,6 +133,16 @@ font_size = 12                                      # 字体大小
 - **界面风格**: 遵循 UOS 深度设计规范
 
 ## 版本历史
+
+### v1.4.0-beta
+- **架构重构**: 3500行单体代码重构为模块化架构
+  - `core/`: 配置管理、指标收集、速率限制器
+  - `infrastructure/`: 数据库、日志、线程池
+  - `services/`: 剪贴板、热键、键盘模拟
+  - `ui/`: 粘贴窗口、托盘图标、应用主类
+- **单实例优化**: 启动第二个实例时自动激活已有窗口
+- **Bug修复**: 修复清理记录确认对话框无法显示的问题
+- **版本同步**: 托盘菜单关于对话框版本号自动同步
 
 ### v1.3.0-beta
 - 新增多标签页系统，支持自定义标签页创建、重命名、删除
