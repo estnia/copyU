@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=copyU
+Comment=UOS剪贴板管理工具
+Exec=python3 /home/feifei/copyU/main.py
+Icon=/home/feifei/copyU/icon.png
+Type=Application
+Terminal=false
+Categories=Utility;
+StartupNotify=true
